@@ -39,7 +39,7 @@ static void * reader(void *sharedData_in)
     int sig;
     sigemptyset(&set);
     sigaddset(&set, SIGUSR1);
-    sigaddset(&set, SIGUSR2);
+    sigaddset(&set, SIGINT);
 
     // Cast the shared data back to type sharedData.
     sharedData_t *sharedData = (sharedData_t *)sharedData_in;
@@ -47,24 +47,35 @@ static void * reader(void *sharedData_in)
     // Open the file for reading.
     FILE *stream;
     stream = fopen(sharedData->filename, "r");
+    if(stream == NULL)
+        {
+            perror("Error");
+            exit(EXIT_FAILURE);
+        }
 
     while(1)
         {
             sigwait(&set, &sig);
-            usleep(rand() % SLEEP);
-            int result = fscanf(stream, "%d %d", &sharedData->a, &sharedData->b);
-
-            if(feof(stream))
+            if(sig == SIGUSR1)
                 {
-                    fclose(stream);
-                    pthread_kill(*sharedData->c, SIGUSR2);
-                    sigwait(&set, &sig);
-                    printf("Goodbye from reader thread!\n");
-                    break;
-                }
+                    usleep(rand() % SLEEP);
+                    fscanf(stream, "%d %d", &sharedData->a, &sharedData->b);
 
-            printf("Thread 1 submitting : %d %d\n", sharedData->a, sharedData->b);
-            pthread_kill(*sharedData->c, SIGUSR1);
+                    if(feof(stream))
+                        {
+                            fclose(stream);
+                            pthread_kill(*sharedData->c, SIGINT);
+                            sigwait(&set, &sig);
+                            if(sig == SIGINT)
+                                {
+                                    printf("Goodbye from reader thread!\n");
+                                    break;
+                                }
+                        }
+
+                    printf("Thread 1 submitting : %d %d\n", sharedData->a, sharedData->b);
+                    pthread_kill(*sharedData->c, SIGUSR2);
+                }
         }
 
     return 0;
@@ -75,12 +86,12 @@ static void * reader(void *sharedData_in)
 // Handler for the calculator thread.
 static void * calculator(void *sharedData_in)
 {
-    // Accept SIGUSR1 Signals.
+    // Accept SIGUSR2 Signals.
     sigset_t set;
     int sig;
     sigemptyset(&set);
-    sigaddset(&set, SIGUSR1);
     sigaddset(&set, SIGUSR2);
+    sigaddset(&set, SIGINT);
 
     // Cast the shared data back to type sharedData
     sharedData_t *sharedData = (sharedData_t *)sharedData_in;
@@ -88,17 +99,17 @@ static void * calculator(void *sharedData_in)
     while(1)
         {
             sigwait(&set, &sig);
-            if(sig == SIGUSR1)
+            if(sig == SIGUSR2)
                 {
                     int calculation = sharedData->a + sharedData->b;
                     printf("Thread 2 calculated : %d %d\n", calculation, sig);
                     usleep(rand() % SLEEP);
                     pthread_kill(*sharedData->r, SIGUSR1);
                 }
-            else if(sig == SIGUSR2)
+            else if(sig == SIGINT)
                 {
                     printf("Goodbye from calculator thread!\n");
-                    pthread_kill(*sharedData->r, SIGUSR2);
+                    pthread_kill(*sharedData->r, SIGINT);
                     break;
                 }
         }
@@ -137,7 +148,10 @@ int main(int argc, char *argv[])
     pthread_create(&r, NULL, reader, (void *) &sharedData);
     pthread_create(&c, NULL, calculator, (void *) &sharedData);
 
+    // Kick of the reading thread by sending SIGUSR1.
     pthread_kill(r, SIGUSR1);
+
+    // Wait for the threads to finish.
     pthread_join(r, NULL);
     pthread_join(c, NULL);
 
