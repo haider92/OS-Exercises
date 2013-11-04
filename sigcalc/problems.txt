@@ -1,0 +1,28 @@
+CA321 - OS Design and Implementation
+================================================================================
+
+Assignment 1 - POSIX threads and signal handling
+--------------------------------------------------------------------------------
+
+ - Ian Duffy, 11356066
+ - Darren Brogan, 11424362
+ - Peter Morgan, 11314976
+
+This project is our own work. We have not recieved assistance beyond what is
+normal, and we have cited any sources from which we have borrowed. We have
+not given a copy of our work, or a part of our work, to anyone. We are aware
+that copying or giving a copy may have serious consequences.
+
+Problems
+--------------------------------------------------------------------------------
+
+The program doesn't succcessfully error when a file containing a string instead
+of a number is supplied.
+
+The program will still print goodbye from both threads when a empty text file
+is supplied.
+
+The program may have issues with fscanf portability. It was only tested on the
+lab machines and gcc version 3.3.3-hammer.
+
+The program uses usleep which is obsolute.

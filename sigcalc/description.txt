@@ -1,0 +1,47 @@
+CA321 - OS Design and Implementation
+================================================================================
+
+Assignment 1 - POSIX threads and signal handling
+--------------------------------------------------------------------------------
+
+ - Ian Duffy, 11356066
+ - Darren Brogan, 11424362
+ - Peter Morgan, 11314976
+
+This project is our own work. We have not recieved assistance beyond what is
+normal, and we have cited any sources from which we have borrowed. We have
+not given a copy of our work, or a part of our work, to anyone. We are aware
+that copying or giving a copy may have serious consequences.
+
+Description
+--------------------------------------------------------------------------------
+
+The program consists of three main parts:
+
+ - Reader thread
+ - Calculator thread
+ - Main function
+
+Along with this it has a struct, `sharedData_t` for containing the required
+information to be passed to the threads.
+
+### Main Function:
+
+The main function blocks `SIGUSR1` and `SIGUSR2` as they are used for
+communications between the threads. It uses the `sharedData_t` struct to
+populate parameters to be passed to the `reader` and `calculator` threads.
+
+### Reader Thread:
+
+The reader thread is open to accepting both `SIGUSR1` and `SIGUSR2`. On
+Recieving a `SIGUSR1` it will read the next two numbers from the specified file.
+After reading the two numbers it will send a `SIGUSR1` to the calculator thread,
+this informs it that data is available. On reaching EOF of the file, the reader
+closes the stream it opened to the file, sends a `SIGUSR2` to the calculator
+thread to tell it to stop, waits for a reply and then ends.
+
+### Calculator Thread:
+
+Waits until a signal is recieved. On Recieving a `SIGUSR1` it will take values 
+from the parameters and calculate them, when completed it sends a SIGUSR1 to the
+Reader thread. On recieving a `SIGUSR2` the thread will end itself.
