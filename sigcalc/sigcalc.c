@@ -103,7 +103,7 @@ static void * calculator(void *sharedData_in)
         {
             sigwait(&set, &sig);
             // If a SIGUSR2 is recieved do a calculation.
-	    if(sig == SIGUSR1)
+            if(sig == SIGUSR1)
                 {
                     int calculation = sharedData->a + sharedData->b;
                     printf("Thread 2 calculated : %d\n", calculation);
@@ -148,12 +148,10 @@ int main(int argc, char *argv[])
     // Create shared data.
     sharedData_t sharedData;
     sharedData.filename = argv[1];
-    sharedData.r = &r;
-    sharedData.c = &c;
 
     // Create the threads.
-    pthread_create(&r, NULL, reader, (void *) &sharedData);
-    pthread_create(&c, NULL, calculator, (void *) &sharedData);
+    pthread_create(&sharedData.r, NULL, reader, (void *) &sharedData);
+    pthread_create(&sharedData.c, NULL, calculator, (void *) &sharedData);
 
     // Kick of the reading thread by sending SIGUSR1.
     pthread_kill(r, SIGUSR1);
