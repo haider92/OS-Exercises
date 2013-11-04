@@ -2,9 +2,9 @@
 // CA321 - OS Design and Implementation
 // Assignment 1 - POSIX threads and signal handling
 //
-// @author Ian Duffy
-// @author Darren Brogan
-// @author Peter Morgan
+// @author Ian Duffy, 11356066
+// @author Darren Brogan, 11424362
+// @author Peter Morgan, 11314976
 //
 // This project is our own work. We have not recieved assistance beyond what is
 // normal, and we have cited any sources from which we have borrowed. We have
@@ -34,12 +34,12 @@ typedef struct
 // Handler for the reader thread.
 static void * reader(void *sharedData_in)
 {
-    // Accept SIGUSR1 signals.
+    // Accept SIGUSR1 and SIGUSR2 signals.
     sigset_t set;
     int sig;
     sigemptyset(&set);
     sigaddset(&set, SIGUSR1);
-    sigaddset(&set, SIGINT);
+    sigaddset(&set, SIGUSR2);
 
     // Cast the shared data back to type sharedData.
     sharedData_t *sharedData = (sharedData_t *)sharedData_in;
@@ -56,17 +56,20 @@ static void * reader(void *sharedData_in)
     while(1)
         {
             sigwait(&set, &sig);
+            // When a SIGUSR1 is recieved read two numbers from the given file.
             if(sig == SIGUSR1)
                 {
                     usleep(rand() % SLEEP);
                     fscanf(stream, "%d %d", &sharedData->a, &sharedData->b);
 
+                    // When EOF is reached close the stream and end all the threads.
                     if(feof(stream))
                         {
                             fclose(stream);
-                            pthread_kill(*sharedData->c, SIGINT);
+                            // Tell the calculator thread to end.
+                            pthread_kill(*sharedData->c, SIGUSR2);
                             sigwait(&set, &sig);
-                            if(sig == SIGINT)
+                            if(sig == SIGUSR2)
                                 {
                                     printf("Goodbye from reader thread!\n");
                                     break;
@@ -74,7 +77,7 @@ static void * reader(void *sharedData_in)
                         }
 
                     printf("Thread 1 submitting : %d %d\n", sharedData->a, sharedData->b);
-                    pthread_kill(*sharedData->c, SIGUSR2);
+                    pthread_kill(*sharedData->c, SIGUSR1);
                 }
         }
 
@@ -86,12 +89,12 @@ static void * reader(void *sharedData_in)
 // Handler for the calculator thread.
 static void * calculator(void *sharedData_in)
 {
-    // Accept SIGUSR2 Signals.
+    // Accept SIGUSR1 and SIGUSR2 Signals.
     sigset_t set;
     int sig;
     sigemptyset(&set);
+    sigaddset(&set, SIGUSR1);
     sigaddset(&set, SIGUSR2);
-    sigaddset(&set, SIGINT);
 
     // Cast the shared data back to type sharedData
     sharedData_t *sharedData = (sharedData_t *)sharedData_in;
@@ -99,17 +102,21 @@ static void * calculator(void *sharedData_in)
     while(1)
         {
             sigwait(&set, &sig);
-            if(sig == SIGUSR2)
+            // If a SIGUSR2 is recieved do a calculation.
+	    if(sig == SIGUSR1)
                 {
                     int calculation = sharedData->a + sharedData->b;
-                    printf("Thread 2 calculated : %d %d\n", calculation, sig);
+                    printf("Thread 2 calculated : %d\n", calculation);
                     usleep(rand() % SLEEP);
+                    // Inform the reader that the calculation has been completed.
                     pthread_kill(*sharedData->r, SIGUSR1);
                 }
-            else if(sig == SIGINT)
+            // If a SIGUSR2 is recieved end the thread.
+            else if(sig == SIGUSR2)
                 {
                     printf("Goodbye from calculator thread!\n");
-                    pthread_kill(*sharedData->r, SIGINT);
+                    // Inform the reader that the calculation thread has ended.
+                    pthread_kill(*sharedData->r, SIGUSR2);
                     break;
                 }
         }
@@ -130,7 +137,7 @@ int main(int argc, char *argv[])
     if(argc != 2)
         {
             // Display an error to stderr, detailing valid usage.
-            fputs("Usage: ./sigcalc file\n", stderr);
+            fprintf(stderr, "Usage: ./sigcalc file\n");
 
             // Exit returning the sysexits value for invalid command usage.
             exit(EX_USAGE);
