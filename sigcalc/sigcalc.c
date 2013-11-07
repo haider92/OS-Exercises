@@ -40,17 +40,12 @@ static void wakeUpCalculator(int signo) {
     pthread_kill(c, SIGUSR2);
 }
 
-static void interruptCalculator(int signo) {
-    pthread_kill(c, SIGALRM);
-}
-
-static void interruptReader(int signo) {
+static void interruptThreads(int signo) {
+    pthread_kill(c, SIGINT);
     pthread_kill(r, SIGINT);
 }
 
-static void handler(int signo) {
 
-}
 
 // Handler for the reader thread.
 static void * reader(void *sharedData_in) {
@@ -72,7 +67,7 @@ static void * reader(void *sharedData_in) {
     }
 
     while(1) {
-        sleep(1);
+        sleep(.2);
 
         if (sig == SIGUSR1) {
             fscanf(stream, "%d %d", &sharedData->a, &sharedData->b);
@@ -102,7 +97,7 @@ static void * reader(void *sharedData_in) {
 static void * calculator(void *sharedData_in) {
     int sig;
     sigset_t set;
-    sigaddset(&set, SIGALRM);
+    sigaddset(&set, SIGINT);
     sigaddset(&set, SIGUSR2);
     sigprocmask(SIG_BLOCK, &set, NULL);
 
@@ -110,13 +105,13 @@ static void * calculator(void *sharedData_in) {
     sharedData_t *sharedData = (sharedData_t *)sharedData_in;
 
     while(1) {
-        sleep(1);
+        sleep(.2);
 
         if(sig == SIGUSR2) {
             int calculation = sharedData->a + sharedData->b;
             printf("Thread 2 calculated : %d\n", calculation);
             kill(0, SIGUSR1);
-        } else if(sig == SIGALRM) {
+        } else if(sig == SIGINT) {
             printf("Goodbye from Calculator.\n");
             kill(0, SIGPIPE);
             break;
@@ -137,8 +132,7 @@ int main(int argc, char *argv[]) {
     sigprocmask(SIG_BLOCK, &set, NULL);
     sigset(SIGUSR1, wakeUpReader);
     sigset(SIGUSR2, wakeUpCalculator);
-    sigset(SIGALRM, interruptCalculator);
-    sigset(SIGPIPE, interruptReader);
+    sigset(SIGALRM, interruptThreads);
 
     // Check that a valid command line argument was passed.
     if(argc != 2) {
