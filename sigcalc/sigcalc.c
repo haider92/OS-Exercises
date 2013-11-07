@@ -46,7 +46,6 @@ static void interruptThreads(int signo) {
 }
 
 
-
 // Handler for the reader thread.
 static void * reader(void *sharedData_in) {
     int sig = SIGUSR1;
@@ -67,7 +66,7 @@ static void * reader(void *sharedData_in) {
     }
 
     while(1) {
-        sleep(.2);
+        usleep(rand() % SLEEP);
 
         if (sig == SIGUSR1) {
             fscanf(stream, "%d %d", &sharedData->a, &sharedData->b);
@@ -105,7 +104,7 @@ static void * calculator(void *sharedData_in) {
     sharedData_t *sharedData = (sharedData_t *)sharedData_in;
 
     while(1) {
-        sleep(.2);
+        usleep(rand() % SLEEP);
 
         if(sig == SIGUSR2) {
             int calculation = sharedData->a + sharedData->b;
@@ -113,7 +112,6 @@ static void * calculator(void *sharedData_in) {
             kill(0, SIGUSR1);
         } else if(sig == SIGINT) {
             printf("Goodbye from Calculator.\n");
-            kill(0, SIGPIPE);
             break;
         }
 
@@ -128,7 +126,6 @@ int main(int argc, char *argv[]) {
     sigset_t set;
     sigfillset(&set);
     sigdelset(&set, SIGINT);
-    sigdelset(&set,SIGTSTP);
     sigprocmask(SIG_BLOCK, &set, NULL);
     sigset(SIGUSR1, wakeUpReader);
     sigset(SIGUSR2, wakeUpCalculator);
