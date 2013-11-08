@@ -12,6 +12,9 @@
 // that copying or giving a copy may have serious consequences.
 //
 
+#define _XOPEN_SOURCE 500
+#define SLEEP 10000
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -20,8 +23,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sysexits.h>
-
-#define SLEEP 10000
 
 pthread_t r, c;
 
@@ -41,9 +42,13 @@ static void wakeUpCalculator(int signo) {
     pthread_kill(c, SIGUSR2);
 }
 
-// Signal Handler to end both Reader and Calculator.
-static void interruptThreads(int signo) {
-    pthread_kill(c, SIGINT);
+// Signal Handler to Interrupt the Calculator from main.
+static void interruptCalculator(int signo) {
+    pthread_kill(c, SIGALRM);
+}
+
+// Signal Handler to Interrupt the Reader from main.
+static void interruptReader(int signo) {
     pthread_kill(r, SIGINT);
 }
 
@@ -105,7 +110,7 @@ static void * reader(void *sharedData_in) {
 static void * calculator(void *sharedData_in) {
     int sig;
     sigset_t set;
-    sigaddset(&set, SIGINT);
+    sigaddset(&set, SIGALRM);
     sigaddset(&set, SIGUSR2);
     sigprocmask(SIG_BLOCK, &set, NULL);
 
@@ -124,9 +129,10 @@ static void * calculator(void *sharedData_in) {
 
             // Inform Reader from Main that more data is needed.
             kill(0, SIGUSR1);
-        } else if(sig == SIGINT) {
+        } else if(sig == SIGALRM) {
             // Terminate.
             printf("Goodbye from Calculator.\n");
+	    kill(0, SIGPIPE);
             break;
         }
 
@@ -137,14 +143,10 @@ static void * calculator(void *sharedData_in) {
 }
 
 int main(int argc, char *argv[]) {
-    int sig;
-    sigset_t set;
-    sigfillset(&set);
-    sigdelset(&set, SIGINT);
-    sigprocmask(SIG_BLOCK, &set, NULL);
     sigset(SIGUSR1, wakeUpReader);
     sigset(SIGUSR2, wakeUpCalculator);
-    sigset(SIGALRM, interruptThreads);
+    sigset(SIGALRM, interruptCalculator);
+    sigset(SIGPIPE, interruptReader);
 
     // Check that a valid command line argument was passed.
     if(argc != 2) {
