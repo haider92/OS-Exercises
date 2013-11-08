@@ -31,15 +31,17 @@ typedef struct {
     char* filename;
 } sharedData_t;
 
+// Signal handler to wake up reader from main.
 static void wakeUpReader(int signo) {
     pthread_kill(r, SIGUSR1);
 }
 
-
+// Signal Handler to wake up Calculator from main.
 static void wakeUpCalculator(int signo) {
     pthread_kill(c, SIGUSR2);
 }
 
+// Signal Handler to end both Reader and Calculator.
 static void interruptThreads(int signo) {
     pthread_kill(c, SIGINT);
     pthread_kill(r, SIGINT);
@@ -48,6 +50,7 @@ static void interruptThreads(int signo) {
 
 // Handler for the reader thread.
 static void * reader(void *sharedData_in) {
+
     int sig = SIGUSR1;
     sigset_t set;
     sigaddset(&set, SIGINT);
@@ -69,10 +72,14 @@ static void * reader(void *sharedData_in) {
         usleep(rand() % SLEEP);
 
         if (sig == SIGUSR1) {
+            // Read the two numbers.
             fscanf(stream, "%d %d", &sharedData->a, &sharedData->b);
 
+            // Detect the end of the file.
             if(feof(stream)) {
+                // Close the file.
                 fclose(stream);
+                // Tell main to interrupt all threads.
                 kill(0, SIGALRM);
                 sigwait(&set, &sig);
                 if(sig == SIGINT) {
@@ -81,12 +88,14 @@ static void * reader(void *sharedData_in) {
                 }
             }
 
-            printf("Thread 1 submitting : %d %d\n", sharedData->a,
-                   sharedData->b);
+            // Print message to user showing read.
+            printf("Thread 1 submitting : %d %d\n", sharedData->a, sharedData->b);
+
+            // Inform Calculator through Main that Data is available.
             kill(0, SIGUSR2);
         }
 
-        // Wait for main to tell to run.
+        // Wait until more data is required.
         sigwait(&set, &sig);
     }
     return ((void *)NULL);
@@ -107,10 +116,16 @@ static void * calculator(void *sharedData_in) {
         usleep(rand() % SLEEP);
 
         if(sig == SIGUSR2) {
+            // Do the calculation.
             int calculation = sharedData->a + sharedData->b;
+
+            // Inform the user of the outcome.
             printf("Thread 2 calculated : %d\n", calculation);
+
+            // Inform Reader from Main that more data is needed.
             kill(0, SIGUSR1);
         } else if(sig == SIGINT) {
+            // Terminate.
             printf("Goodbye from Calculator.\n");
             break;
         }
