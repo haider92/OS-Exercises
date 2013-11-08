@@ -11,7 +11,6 @@
 // not given a copy of our work, or a part of our work, to anyone. We are aware
 // that copying or giving a copy may have serious consequences.
 //
-
 #define _XOPEN_SOURCE 500
 #define SLEEP 10000
 
@@ -24,7 +23,7 @@
 #include <fcntl.h>
 #include <sysexits.h>
 
-pthread_t r, c;
+pthread_t r, c, m;
 
 // Data structure for passing parameters to the threads.
 typedef struct {
@@ -32,30 +31,23 @@ typedef struct {
     char* filename;
 } sharedData_t;
 
-// Signal handler to wake up reader from main.
 static void wakeUpReader(int signo) {
     pthread_kill(r, SIGUSR1);
 }
 
-// Signal Handler to wake up Calculator from main.
+
 static void wakeUpCalculator(int signo) {
     pthread_kill(c, SIGUSR2);
 }
 
-// Signal Handler to Interrupt the Calculator from main.
-static void interruptCalculator(int signo) {
-    pthread_kill(c, SIGALRM);
-}
-
-// Signal Handler to Interrupt the Reader from main.
-static void interruptReader(int signo) {
+static void interruptThreads(int signo) {
     pthread_kill(r, SIGINT);
+    pthread_kill(c, SIGINT);
 }
 
 
 // Handler for the reader thread.
 static void * reader(void *sharedData_in) {
-
     int sig = SIGUSR1;
     sigset_t set;
     sigaddset(&set, SIGINT);
@@ -77,15 +69,11 @@ static void * reader(void *sharedData_in) {
         usleep(rand() % SLEEP);
 
         if (sig == SIGUSR1) {
-            // Read the two numbers.
             fscanf(stream, "%d %d", &sharedData->a, &sharedData->b);
 
-            // Detect the end of the file.
             if(feof(stream)) {
-                // Close the file.
                 fclose(stream);
-                // Tell main to interrupt all threads.
-                kill(0, SIGALRM);
+                pthread_kill(m, SIGALRM);
                 sigwait(&set, &sig);
                 if(sig == SIGINT) {
                     printf("Goodbye from Reader.\n");
@@ -93,14 +81,12 @@ static void * reader(void *sharedData_in) {
                 }
             }
 
-            // Print message to user showing read.
-            printf("Thread 1 submitting : %d %d\n", sharedData->a, sharedData->b);
-
-            // Inform Calculator through Main that Data is available.
-            kill(0, SIGUSR2);
+            printf("Thread 1 submitting : %d %d\n", sharedData->a,
+                   sharedData->b);
+            pthread_kill(m, SIGUSR2);
         }
 
-        // Wait until more data is required.
+        // Wait for main to tell to run.
         sigwait(&set, &sig);
     }
     return ((void *)NULL);
@@ -110,7 +96,7 @@ static void * reader(void *sharedData_in) {
 static void * calculator(void *sharedData_in) {
     int sig;
     sigset_t set;
-    sigaddset(&set, SIGALRM);
+    sigaddset(&set, SIGINT);
     sigaddset(&set, SIGUSR2);
     sigprocmask(SIG_BLOCK, &set, NULL);
 
@@ -121,18 +107,11 @@ static void * calculator(void *sharedData_in) {
         usleep(rand() % SLEEP);
 
         if(sig == SIGUSR2) {
-            // Do the calculation.
             int calculation = sharedData->a + sharedData->b;
-
-            // Inform the user of the outcome.
             printf("Thread 2 calculated : %d\n", calculation);
-
-            // Inform Reader from Main that more data is needed.
-            kill(0, SIGUSR1);
-        } else if(sig == SIGALRM) {
-            // Terminate.
+            pthread_kill(m, SIGUSR1);
+        } else if(sig == SIGINT) {
             printf("Goodbye from Calculator.\n");
-	    kill(0, SIGPIPE);
             break;
         }
 
@@ -145,8 +124,7 @@ static void * calculator(void *sharedData_in) {
 int main(int argc, char *argv[]) {
     sigset(SIGUSR1, wakeUpReader);
     sigset(SIGUSR2, wakeUpCalculator);
-    sigset(SIGALRM, interruptCalculator);
-    sigset(SIGPIPE, interruptReader);
+    sigset(SIGALRM, interruptThreads);
 
     // Check that a valid command line argument was passed.
     if(argc != 2) {
@@ -157,6 +135,7 @@ int main(int argc, char *argv[]) {
         exit(EX_USAGE);
     }
 
+    m = pthread_self();
     sharedData_t sharedData;
     sharedData.filename = argv[1];
 
