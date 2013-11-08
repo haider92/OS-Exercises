@@ -23,34 +23,18 @@
 #include <fcntl.h>
 #include <sysexits.h>
 
-pthread_t r, c, m;
-
 // Data structure for passing parameters to the threads.
 typedef struct {
     int a, b;
     char* filename;
+    pthread_t main;
 } sharedData_t;
-
-static void wakeUpReader(int signo) {
-    pthread_kill(r, SIGUSR1);
-}
-
-
-static void wakeUpCalculator(int signo) {
-    pthread_kill(c, SIGUSR2);
-}
-
-static void interruptThreads(int signo) {
-    pthread_kill(r, SIGINT);
-    pthread_kill(c, SIGINT);
-}
-
 
 // Handler for the reader thread.
 static void * reader(void *sharedData_in) {
     int sig = SIGUSR1;
     sigset_t set;
-    sigaddset(&set, SIGINT);
+    sigaddset(&set, SIGALRM);
     sigaddset(&set, SIGUSR1);
     sigprocmask(SIG_BLOCK, &set, NULL);
 
@@ -73,9 +57,9 @@ static void * reader(void *sharedData_in) {
 
             if(feof(stream)) {
                 fclose(stream);
-                pthread_kill(m, SIGALRM);
+                pthread_kill(sharedData->main, SIGALRM);
                 sigwait(&set, &sig);
-                if(sig == SIGINT) {
+                if(sig == SIGALRM) {
                     printf("Goodbye from Reader.\n");
                     break;
                 }
@@ -83,7 +67,7 @@ static void * reader(void *sharedData_in) {
 
             printf("Thread 1 submitting : %d %d\n", sharedData->a,
                    sharedData->b);
-            pthread_kill(m, SIGUSR2);
+            pthread_kill(sharedData->main, SIGUSR2);
         }
 
         // Wait for main to tell to run.
@@ -96,7 +80,7 @@ static void * reader(void *sharedData_in) {
 static void * calculator(void *sharedData_in) {
     int sig;
     sigset_t set;
-    sigaddset(&set, SIGINT);
+    sigaddset(&set, SIGALRM);
     sigaddset(&set, SIGUSR2);
     sigprocmask(SIG_BLOCK, &set, NULL);
 
@@ -109,8 +93,8 @@ static void * calculator(void *sharedData_in) {
         if(sig == SIGUSR2) {
             int calculation = sharedData->a + sharedData->b;
             printf("Thread 2 calculated : %d\n", calculation);
-            pthread_kill(m, SIGUSR1);
-        } else if(sig == SIGINT) {
+            pthread_kill(sharedData->main, SIGUSR1);
+        } else if(sig == SIGALRM) {
             printf("Goodbye from Calculator.\n");
             break;
         }
@@ -122,9 +106,14 @@ static void * calculator(void *sharedData_in) {
 }
 
 int main(int argc, char *argv[]) {
-    sigset(SIGUSR1, wakeUpReader);
-    sigset(SIGUSR2, wakeUpCalculator);
-    sigset(SIGALRM, interruptThreads);
+    pthread_t r, c;
+
+    int sig;
+    sigset_t set;
+    sigaddset(&set, SIGUSR1);
+    sigaddset(&set, SIGUSR2);
+    sigaddset(&set, SIGALRM);
+    sigprocmask(SIG_BLOCK, &set, NULL);
 
     // Check that a valid command line argument was passed.
     if(argc != 2) {
@@ -135,15 +124,28 @@ int main(int argc, char *argv[]) {
         exit(EX_USAGE);
     }
 
-    m = pthread_self();
     sharedData_t sharedData;
+    sharedData.main = pthread_self();
     sharedData.filename = argv[1];
 
-    pthread_create(&r,NULL,reader,(void *) &sharedData);
-    pthread_create(&c,NULL,calculator,(void *) &sharedData);
+    pthread_create(&r, NULL, reader, (void *) &sharedData);
+    pthread_create(&c, NULL, calculator, (void *) &sharedData);
 
-    pthread_join(r,NULL);
-    pthread_join(c,NULL);
+    while(1) {
+        sigwait(&set, &sig);
+        if(sig == SIGUSR1) {
+            pthread_kill(r, SIGUSR1);
+        } else if(sig == SIGUSR2) {
+            pthread_kill(c, SIGUSR2);
+        } else {
+            pthread_kill(r, SIGALRM);
+            pthread_kill(c, SIGALRM);
+            break;
+        }
+    }
+
+    pthread_join(r, NULL);
+    pthread_join(c, NULL);
 
     return 0;
 }
