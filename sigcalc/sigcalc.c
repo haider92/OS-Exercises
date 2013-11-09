@@ -48,17 +48,8 @@ static void * reader(void *sharedData_in) {
         exit(EXIT_FAILURE);
     }
 
-    while(1) {
+    while(!feof(stream)) {
         fscanf(stream, "%d %d", &sharedData->a, &sharedData->b);
-
-        if(feof(stream)) {
-            fclose(stream);
-            pthread_kill(sharedData->main, SIGUSR2);
-            sigwait(&set, &sig);
-            printf("Goodbye from Reader.\n");
-            break;
-        }
-
         printf("Thread 1 submitting : %d %d\n", sharedData->a,sharedData->b);
         pthread_kill(sharedData->main, SIGUSR1);
 
@@ -66,6 +57,10 @@ static void * reader(void *sharedData_in) {
         sigwait(&set, &sig);
         usleep(rand() % SLEEP);
     }
+    fclose(stream);
+    pthread_kill(sharedData->main, SIGUSR2);
+    sigwait(&set, &sig);
+    printf("Goodbye from Reader.\n");
 
     return ((void *)NULL);
 }
@@ -81,21 +76,18 @@ static void * calculator(void *sharedData_in) {
     // Cast the shared data back to type sharedData.
     sharedData_t *sharedData = (sharedData_t *)sharedData_in;
 
-    while(1) {
+    while(sig != SIGUSR2) {
         if(sig == SIGUSR1) {
             int calculation = sharedData->a + sharedData->b;
             printf("Thread 2 calculated : %d\n", calculation);
             pthread_kill(sharedData->main, SIGUSR1);
-        } else if(sig == SIGUSR2) {
-            pthread_kill(sharedData->main, SIGUSR2);
-            printf("Goodbye from Calculator.\n");
-            break;
         }
-
         // Wait for main to tell to run.
         sigwait(&set, &sig);
         usleep(rand() % SLEEP);
     }
+    pthread_kill(sharedData->main, SIGUSR2);
+    printf("Goodbye from Calculator.\n");
     return ((void *)NULL);
 }
 
