@@ -12,12 +12,15 @@
 // that copying or giving a copy may have serious consequences.
 //
 #define _XOPEN_SOURCE 500
+#define ETIMEDOUT 110
+#define ONE_SECOND 1000000
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <time.h>
 #include <signal.h>
+#include <unistd.h>
 
 typedef struct {
     int roomNumber;
@@ -28,7 +31,8 @@ typedef struct {
     q_elem_t *buf;
     int size, expired, alloc;
     pthread_mutex_t mutex;
-    pthread_cond_t cond;
+    pthread_cond_t insertion;
+    pthread_cond_t removal;
 } pri_queue_t;
 
 pri_queue_t* priq_new(int size) {
@@ -101,77 +105,78 @@ int priq_size(pri_queue_t *q) {
     return q->size - 1;
 }
 
-static void cleanup_handler(void *arg) {
-    pthread_mutex_t* mutex = (pthread_mutex_t*) arg;
-    printf("Called clean-up handler\n");
+void cleanup(void * args) {
+    pthread_mutex_t * mutex = (pthread_mutex_t *) args;
     pthread_mutex_unlock(mutex);
+    printf("Goodbye");
 }
-
 
 void * generator(void *q_in) {
     pri_queue_t * q = (pri_queue_t *) q_in;
 
-    pthread_cleanup_push(cleanup_handler, &q->mutex);
+    pthread_cleanup_push(cleanup, (void *)&q->mutex);
 
     while(1) {
+        usleep(rand() % (ONE_SECOND));
+
         pthread_mutex_lock(&q->mutex);
 
-        int roomNumber = rand() % 5000;
-
-        time_t wakeupTime = (time(NULL) + rand() % 100);
+        int roomNumber = 1 + (rand() % 5000);
+        time_t wakeupTime = (time(0) + 1);
         struct tm * timeinfo = localtime( &wakeupTime );
         printf("Registering: \t%d %s\n", roomNumber, asctime(timeinfo));
-
         priq_push(q, roomNumber, wakeupTime);
 
-        pthread_cond_signal(&q->cond);
-
-        struct timespec timeout;
-        timeout.tv_sec = time(0) + (rand() % 5);
-        pthread_cond_timedwait(&q->cond, &q->mutex, &timeout);
-
+        pthread_cond_signal(&q->insertion);
         pthread_mutex_unlock(&q->mutex);
+
     }
 
     pthread_cleanup_pop(1);
+
     return ((void *)NULL);
 }
 
 static void * reader(void *q_in) {
     pri_queue_t * q = (pri_queue_t *) q_in;
     time_t p;
+    struct tm * timeinfo;
 
-    pthread_cleanup_push(cleanup_handler, &q->mutex);
+    pthread_cleanup_push(cleanup, (void *)&q->mutex);
 
     while(1) {
         pthread_mutex_lock(&q->mutex);
 
         while(priq_size(q) == 0) {
-            pthread_cond_wait(&q->cond, &q->mutex);
+            pthread_cond_wait(&q->insertion, &q->mutex);
+        }
+
+        while(priq_top(q, &p) && p != time(0)) {
+            struct timespec timeout;
+            timeout.tv_sec = (long) p;
+            pthread_cond_timedwait(&q->insertion, &q->mutex, &timeout);
         }
 
         while(priq_top(q, &p) && p == time(0)) {
             q->expired = q->expired + 1;
             int roomNumber = priq_pop(q, &p);
-            struct tm * timeinfo = localtime( &p );
+            timeinfo = localtime( &p );
             printf("Wake up: \t%d %s\n", roomNumber, asctime(timeinfo));
             printf("Expired alarms:\t%d\n", q->expired);
             printf("Pending alarms:\t%d\n\n", priq_size(q));
         }
 
-        struct timespec timeout;
-        timeout.tv_sec = (long) p;
-        pthread_cond_timedwait(&q->cond, &q->mutex, &timeout);
-
         pthread_mutex_unlock(&q->mutex);
     }
 
     pthread_cleanup_pop(1);
+
     return ((void *)NULL);
 }
 
 int main() {
     pthread_t g, r;
+
     int sig;
     sigset_t set;
     sigaddset(&set, SIGINT);
@@ -179,18 +184,17 @@ int main() {
 
     pri_queue_t q = *priq_new(0);
     pthread_mutex_init(&q.mutex, NULL);
-    pthread_cond_init(&q.cond, NULL);
+    pthread_cond_init(&q.insertion, NULL);
+    pthread_cond_init(&q.removal, NULL);
 
     pthread_create(&g, NULL, generator, (void *) &q);
     pthread_create(&r, NULL, reader, (void *) &q);
 
     sigwait(&set, &sig);
     pthread_cancel(g);
-    pthread_cancel(r);
     pthread_join(g, NULL);
+    pthread_cancel(r);
     pthread_join(r, NULL);
-    printf("ending...");
-    pthread_mutex_lock(&q.mutex);
 
     return 0;
 }
