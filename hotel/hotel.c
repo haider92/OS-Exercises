@@ -101,15 +101,17 @@ int priq_size(pri_queue_t *q) {
     return q->size - 1;
 }
 
-void generatorCleanup(int signum) {
-    printf("Goodbye from generator");
-    exit(0);
+static void cleanup_handler(void *arg) {
+    pthread_mutex_t* mutex = (pthread_mutex_t*) arg;
+    printf("Called clean-up handler\n");
+    pthread_mutex_unlock(mutex);
 }
+
 
 void * generator(void *q_in) {
     pri_queue_t * q = (pri_queue_t *) q_in;
-    int i = 0;
-    pthread_cleanup_push(generatorCleanup, (void *)&i);
+
+    pthread_cleanup_push(cleanup_handler, &q->mutex);
 
     while(1) {
         pthread_mutex_lock(&q->mutex);
@@ -131,13 +133,15 @@ void * generator(void *q_in) {
         pthread_mutex_unlock(&q->mutex);
     }
 
-    pthread_cleanup_pop(0);
-    return((void *)0);
+    pthread_cleanup_pop(1);
+    return ((void *)NULL);
 }
 
 static void * reader(void *q_in) {
     pri_queue_t * q = (pri_queue_t *) q_in;
     time_t p;
+
+    pthread_cleanup_push(cleanup_handler, &q->mutex);
 
     while(1) {
         pthread_mutex_lock(&q->mutex);
@@ -161,11 +165,17 @@ static void * reader(void *q_in) {
 
         pthread_mutex_unlock(&q->mutex);
     }
+
+    pthread_cleanup_pop(1);
     return ((void *)NULL);
 }
 
 int main() {
     pthread_t g, r;
+    int sig;
+    sigset_t set;
+    sigaddset(&set, SIGINT);
+    sigprocmask(SIG_BLOCK, &set, NULL);
 
     pri_queue_t q = *priq_new(0);
     pthread_mutex_init(&q.mutex, NULL);
@@ -174,8 +184,13 @@ int main() {
     pthread_create(&g, NULL, generator, (void *) &q);
     pthread_create(&r, NULL, reader, (void *) &q);
 
+    sigwait(&set, &sig);
+    pthread_cancel(g);
+    pthread_cancel(r);
     pthread_join(g, NULL);
     pthread_join(r, NULL);
+    printf("ending...");
+    pthread_mutex_lock(&q.mutex);
 
     return 0;
 }
