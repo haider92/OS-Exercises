@@ -12,8 +12,6 @@
 // that copying or giving a copy may have serious consequences.
 //
 #define _XOPEN_SOURCE 500
-#define ETIMEDOUT 110
-#define ONE_SECOND 1000000
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,7 +73,7 @@ int priq_pop(pri_queue_t* q, time_t *wakeupTime) {
     q_elem_t *b = q->buf;
 
     out = b[1].roomNumber;
-    *wakeupTime = b[1].wakeupTime;
+    if(wakeupTime) *wakeupTime = b[1].wakeupTime;
 
     --q->size;
 
@@ -105,24 +103,23 @@ int priq_size(pri_queue_t *q) {
     return q->size - 1;
 }
 
-void cleanup(void * args) {
-    pthread_mutex_t * mutex = (pthread_mutex_t *) args;
+void cleanup_guest(void * mutex_in) {
+    pthread_mutex_t * mutex = (pthread_mutex_t *) mutex_in;
+    printf("The guest thread is cleaning up...\n");
     pthread_mutex_unlock(mutex);
-    printf("Goodbye");
+    printf("The guest thread says goodbye.\n");
 }
 
-void * generator(void *q_in) {
+void * guest(void *q_in) {
     pri_queue_t * q = (pri_queue_t *) q_in;
 
-    pthread_cleanup_push(cleanup, (void *)&q->mutex);
+    pthread_cleanup_push(cleanup_guest, (void *)&q->mutex);
 
     while(1) {
-        usleep(rand() % (ONE_SECOND));
-
         pthread_mutex_lock(&q->mutex);
 
         int roomNumber = 1 + (rand() % 5000);
-        time_t wakeupTime = (time(0) + 1);
+        time_t wakeupTime = (time(0) + (rand() % 100));
         struct tm * timeinfo = localtime( &wakeupTime );
         printf("Registering: \t%d %s\n", roomNumber, asctime(timeinfo));
         priq_push(q, roomNumber, wakeupTime);
@@ -130,6 +127,7 @@ void * generator(void *q_in) {
         pthread_cond_signal(&q->insertion);
         pthread_mutex_unlock(&q->mutex);
 
+        usleep(rand() % 5000000);
     }
 
     pthread_cleanup_pop(1);
@@ -137,12 +135,19 @@ void * generator(void *q_in) {
     return ((void *)NULL);
 }
 
-static void * reader(void *q_in) {
+void cleanup_waiter(void * mutex_in) {
+    pthread_mutex_t * mutex = (pthread_mutex_t *) mutex_in;
+    printf("The waiter thread is cleaning up...\n");
+    pthread_mutex_unlock(mutex);
+    printf("The waiter thread says goodbye.\n");
+}
+
+static void * waiter(void *q_in) {
     pri_queue_t * q = (pri_queue_t *) q_in;
     time_t p;
     struct tm * timeinfo;
 
-    pthread_cleanup_push(cleanup, (void *)&q->mutex);
+    pthread_cleanup_push(cleanup_waiter, (void *)&q->mutex);
 
     while(1) {
         pthread_mutex_lock(&q->mutex);
@@ -175,7 +180,7 @@ static void * reader(void *q_in) {
 }
 
 int main() {
-    pthread_t g, r;
+    pthread_t g, w;
 
     int sig;
     sigset_t set;
@@ -187,14 +192,18 @@ int main() {
     pthread_cond_init(&q.insertion, NULL);
     pthread_cond_init(&q.removal, NULL);
 
-    pthread_create(&g, NULL, generator, (void *) &q);
-    pthread_create(&r, NULL, reader, (void *) &q);
+    pthread_create(&g, NULL, guest, (void *) &q);
+    pthread_create(&w, NULL, waiter, (void *) &q);
 
     sigwait(&set, &sig);
     pthread_cancel(g);
     pthread_join(g, NULL);
-    pthread_cancel(r);
-    pthread_join(r, NULL);
+    pthread_cancel(w);
+    pthread_join(w, NULL);
 
+    pthread_mutex_lock(&q.mutex);
+    while(priq_pop(&q, NULL));
+    printf("Pending alarms:\t%d\n", priq_size(&q));
+    pthread_mutex_unlock(&q.mutex);
     return 0;
 }
