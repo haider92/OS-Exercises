@@ -11,199 +11,176 @@
 // not given a copy of our work, or a part of our work, to anyone. We are aware
 // that copying or giving a copy may have serious consequences.
 //
-#define _XOPEN_SOURCE 500
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <time.h>
+#include <errno.h>
 #include <signal.h>
 #include <unistd.h>
 
-typedef struct {
-    int roomNumber;
-    time_t wakeupTime;
-} q_elem_t;
+typedef struct node {
+    int room_number;
+    long expiry_time;
+    struct node *next;
+} Node;
 
 typedef struct {
-    q_elem_t *buf;
-    int size, expired, alloc;
+    Node *head;
+    int pending;
     pthread_mutex_t mutex;
-    pthread_cond_t insertion;
-    pthread_cond_t removal;
-} pri_queue_t;
+    pthread_cond_t cond;
+} shared_data_t;
 
-pri_queue_t* priq_new(int size) {
-    if (size < 4) size = 4;
+Node *insert(Node *head, int room_number, long expiry_time) {
+    Node *newNode = (Node*) malloc(sizeof(Node));
+    newNode->room_number = room_number;
+    newNode->expiry_time = expiry_time;
 
-    pri_queue_t* q = malloc(sizeof(pri_queue_t));
-    q->buf = malloc(sizeof(q_elem_t) * size);
-    q->alloc = size;
-
-    q->size = 1;
-
-    return q;
-}
-
-void priq_push(pri_queue_t* q, int roomNumber, time_t wakeupTime) {
-    q_elem_t *b;
-    int n, m;
-
-    if (q->size >= q->alloc) {
-        q->alloc *= 2;
-        b = q->buf = realloc(q->buf, sizeof(q_elem_t) * q->alloc);
-    } else
-        b = q->buf;
-
-    n = q->size++;
-
-    while ((m = n / 2) && wakeupTime < b[m].wakeupTime) {
-        b[n] = b[m];
-        n = m;
+    // If head is empty.
+    if (head == NULL) {
+        newNode->next = NULL;
+        return newNode;
     }
 
-    b[n].roomNumber = roomNumber;
-    b[n].wakeupTime = wakeupTime;
-}
-
-int priq_pop(pri_queue_t* q, time_t *wakeupTime) {
-    int out;
-    if (q->size == 1) return 0;
-
-    q_elem_t *b = q->buf;
-
-    out = b[1].roomNumber;
-    if(wakeupTime) *wakeupTime = b[1].wakeupTime;
-
-    --q->size;
-
-    int n = 1, m;
-    while ((m = n * 2) < q->size) {
-        if (m + 1 < q->size && b[m].wakeupTime > b[m + 1].wakeupTime) m++;
-
-        if (b[q->size].wakeupTime <= b[m].wakeupTime) break;
-        b[n] = b[m];
-        n = m;
+    // If the new expiry_time is smaller.
+    if (expiry_time < head->expiry_time) {
+        newNode->next = head;
+        return newNode;
     }
 
-    b[n] = b[q->size];
-    if (q->size < q->alloc / 2 && q->size >= 16)
-        q->buf = realloc(q->buf, (q->alloc /= 2) * sizeof(b[0]));
+    Node *previousNode = head;
+    Node *currentNode = head->next;
 
-    return out;
+    while (currentNode != NULL && expiry_time > currentNode->expiry_time) {
+        previousNode = currentNode;
+        currentNode = currentNode->next;
+    }
+
+    // Insert the newNode between previousNode and currentNode.
+    newNode->next = previousNode->next;
+    previousNode->next = newNode;
+
+    return head;
 }
 
-int priq_top(pri_queue_t* q, time_t *wakeupTime) {
-    if (q->size == 1) return 0;
-    if (wakeupTime) *wakeupTime = q->buf[1].wakeupTime;
-    return q->buf[1].roomNumber;
+Node *removeFirst(Node *head) {
+    // reference to the next node
+    Node *tempNode = head->next;
+
+    // Free the head
+    free(head);
+
+    // The second node now becomes head
+    return tempNode;
 }
 
-int priq_size(pri_queue_t *q) {
-    return q->size - 1;
-}
-
-void cleanup_guest(void * mutex_in) {
-    pthread_mutex_t * mutex = (pthread_mutex_t *) mutex_in;
+void cleanup_guest(void * data_in) {
     printf("The guest thread is cleaning up...\n");
-    pthread_mutex_unlock(mutex);
     printf("The guest thread says goodbye.\n");
 }
 
-void * guest(void *q_in) {
-    pri_queue_t * q = (pri_queue_t *) q_in;
-
-    pthread_cleanup_push(cleanup_guest, (void *)&q->mutex);
-
-    while(1) {
-        pthread_mutex_lock(&q->mutex);
-
-        int roomNumber = 1 + (rand() % 5000);
-        time_t wakeupTime = (time(0) + (rand() % 100));
-        struct tm * timeinfo = localtime( &wakeupTime );
-        printf("Registering: \t%d %s\n", roomNumber, asctime(timeinfo));
-        priq_push(q, roomNumber, wakeupTime);
-
-        pthread_cond_signal(&q->insertion);
-        pthread_mutex_unlock(&q->mutex);
-
-        usleep(rand() % 5000000);
-    }
-
-    pthread_cleanup_pop(1);
-
-    return ((void *)NULL);
-}
-
-void cleanup_waiter(void * mutex_in) {
-    pthread_mutex_t * mutex = (pthread_mutex_t *) mutex_in;
+void cleanup_waiter(void * data_in) {
+    shared_data_t * data = (shared_data_t *) data_in;
     printf("The waiter thread is cleaning up...\n");
-    pthread_mutex_unlock(mutex);
-    printf("The waiter thread says goodbye.\n");
+    while(data->head != NULL) {
+        data->head = removeFirst(data->head);
+        data->pending--;
+    }
+    printf("The waiter thread says goodbye\n");
 }
 
-static void * waiter(void *q_in) {
-    pri_queue_t * q = (pri_queue_t *) q_in;
-    time_t p;
-    struct tm * timeinfo;
+void * guest(void *data_in) {
+    shared_data_t *data = (shared_data_t *) data_in;
 
-    pthread_cleanup_push(cleanup_waiter, (void *)&q->mutex);
+    pthread_cleanup_push(cleanup_guest, (void *)NULL);
 
     while(1) {
-        pthread_mutex_lock(&q->mutex);
+        pthread_mutex_lock(&data->mutex);
 
-        while(priq_size(q) == 0) {
-            pthread_cond_wait(&q->insertion, &q->mutex);
+        int room_number = 1 + (rand() % 5000);
+        long expiry_time = time(NULL) + (rand() % 100);
+
+        data->pending++;
+
+        printf("Registering:\t%d %s\n", room_number, ctime(&expiry_time));
+        data->head = insert(data->head, room_number, expiry_time);
+
+        if(expiry_time == data->head->expiry_time) {
+            pthread_cond_signal(&data->cond);
         }
+        pthread_mutex_unlock(&data->mutex);
 
-        while(priq_top(q, &p) && p != time(0)) {
-            struct timespec timeout;
-            timeout.tv_sec = (long) p;
-            pthread_cond_timedwait(&q->insertion, &q->mutex, &timeout);
-        }
-
-        while(priq_top(q, &p) && p == time(0)) {
-            q->expired = q->expired + 1;
-            int roomNumber = priq_pop(q, &p);
-            timeinfo = localtime( &p );
-            printf("Wake up: \t%d %s\n", roomNumber, asctime(timeinfo));
-            printf("Expired alarms:\t%d\n", q->expired);
-            printf("Pending alarms:\t%d\n\n", priq_size(q));
-        }
-
-        pthread_mutex_unlock(&q->mutex);
+        sleep(rand() % 5);
     }
 
-    pthread_cleanup_pop(1);
+    pthread_cleanup_pop(0);
 
     return ((void *)NULL);
 }
+
+void * waiter(void *data_in) {
+    shared_data_t *data = (shared_data_t *) data_in;
+    int error, expired = 0;
+    struct timespec timeout;
+
+    pthread_cleanup_push(cleanup_waiter, (void *)data);
+
+    while(1) {
+        pthread_mutex_lock(&data->mutex);
+
+        while(data->head == NULL) {
+            pthread_cond_wait(&data->cond, &data->mutex);
+        }
+
+        timeout.tv_sec = data->head->expiry_time;
+        timeout.tv_nsec = 0;
+        error = pthread_cond_timedwait(&data->cond, &data->mutex, &timeout);
+
+        if(error == ETIMEDOUT) {
+            expired++;
+            data->pending--;
+            printf("Wake up:\t%d %s\n", data->head->room_number, ctime(&data->head->expiry_time));
+            printf("Expired alarms:\t%d\n", expired);
+            printf("Pending alarms:\t%d\n\n", data->pending);
+            data->head = removeFirst(data->head);
+        }
+
+        pthread_mutex_unlock(&data->mutex);
+    }
+
+    pthread_cleanup_pop(0);
+
+    return ((void *)NULL);
+}
+
 
 int main() {
+
+    shared_data_t data;
+    data.head = NULL;
+    data.pending = 0;
+
+    pthread_mutex_init(&data.mutex, NULL);
+    pthread_cond_init(&data.cond, NULL);
+
     pthread_t g, w;
 
-    int sig;
+    pthread_create(&g, NULL, guest, (void *) &data);
+    pthread_create(&w, NULL, waiter, (void *) &data);
+
     sigset_t set;
     sigaddset(&set, SIGINT);
     sigprocmask(SIG_BLOCK, &set, NULL);
 
-    pri_queue_t q = *priq_new(0);
-    pthread_mutex_init(&q.mutex, NULL);
-    pthread_cond_init(&q.insertion, NULL);
-    pthread_cond_init(&q.removal, NULL);
-
-    pthread_create(&g, NULL, guest, (void *) &q);
-    pthread_create(&w, NULL, waiter, (void *) &q);
-
-    sigwait(&set, &sig);
+    sigwait(&set, NULL);
     pthread_cancel(g);
-    pthread_join(g, NULL);
     pthread_cancel(w);
+    pthread_join(g, NULL);
     pthread_join(w, NULL);
 
-    pthread_mutex_lock(&q.mutex);
-    while(priq_pop(&q, NULL));
-    printf("Pending alarms:\t%d\n", priq_size(&q));
-    pthread_mutex_unlock(&q.mutex);
+    pthread_mutex_destroy(&data.mutex);
+    printf("Pending: %d\n", data.pending);
     return 0;
 }
