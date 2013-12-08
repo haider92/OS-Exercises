@@ -88,6 +88,7 @@ void cleanup_waiter(void * data_in) {
         data->head = removeFirst(data->head);
         data->pending--;
     }
+    pthread_mutex_unlock(&data->mutex);
     printf("The waiter thread says goodbye\n");
 }
 
@@ -122,8 +123,7 @@ void * guest(void *data_in) {
 
 void * waiter(void *data_in) {
     shared_data_t *data = (shared_data_t *) data_in;
-    int error, expired = 0;
-    struct timespec timeout;
+    int expired = 0;
 
     pthread_cleanup_push(cleanup_waiter, (void *)data);
 
@@ -134,9 +134,10 @@ void * waiter(void *data_in) {
             pthread_cond_wait(&data->cond, &data->mutex);
         }
 
+        struct timespec timeout;
         timeout.tv_sec = data->head->expiry_time;
         timeout.tv_nsec = 0;
-        error = pthread_cond_timedwait(&data->cond, &data->mutex, &timeout);
+        int error = pthread_cond_timedwait(&data->cond, &data->mutex, &timeout);
 
         if(error == ETIMEDOUT) {
             expired++;
@@ -180,6 +181,8 @@ int main() {
     pthread_join(g, NULL);
     pthread_join(w, NULL);
 
+    pthread_mutex_lock(&data.mutex);
+    pthread_mutex_unlock(&data.mutex);
     pthread_mutex_destroy(&data.mutex);
     printf("Pending: %d\n", data.pending);
     return 0;
