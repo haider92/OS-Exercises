@@ -1,4 +1,4 @@
-CA321
-=====
+Operating Systems Exercises
+===========================
 
-CA321 Assignment
+Exercises from an operating systems module.
