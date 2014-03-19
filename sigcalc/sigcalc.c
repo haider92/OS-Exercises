@@ -2,15 +2,7 @@
 // CA321 - OS Design and Implementation
 // Assignment 1 - POSIX threads and signal handling
 //
-// @author Ian Duffy, 11356066
-// @author Darren Brogan, 11424362
-// @author Peter Morgan, 11314976
-//
-// This project is our own work. We have not recieved assistance beyond what is
-// normal, and we have cited any sources from which we have borrowed. We have
-// not given a copy of our work, or a part of our work, to anyone. We are aware
-// that copying or giving a copy may have serious consequences.
-//
+
 #define _XOPEN_SOURCE 500
 #define SLEEP 10000
 
