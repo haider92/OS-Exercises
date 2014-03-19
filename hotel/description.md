@@ -4,15 +4,6 @@ CA321 - OS Design and Implementation
 Assignment 2 - Hotel Wakeup call system
 --------------------------------------------------------------------------------
 
- - Ian Duffy, 11356066
- - Darren Brogan, 11424362
- - Peter Morgan, 11314976
-
-This project is our own work. We have not recieved assistance beyond what is
-normal, and we have cited any sources from which we have borrowed. We have
-not given a copy of our work, or a part of our work, to anyone. We are aware
-that copying or giving a copy may have serious consequences.
-
 Description
 --------------------------------------------------------------------------------
 
